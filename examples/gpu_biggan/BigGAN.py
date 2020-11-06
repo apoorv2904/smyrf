@@ -71,6 +71,11 @@ class Generator(nn.Module):
                q_attn_size=64,
                k_attn_size=64,
                max_iters=10,
+               attn_approx="fast-transformers",
+               attn_type='',
+               feature_map='FAVOR',
+               topk=32,
+               n_dims=256,
                progress=False,
                return_attn_map=False,
                **kwargs):
@@ -180,7 +185,7 @@ class Generator(nn.Module):
       # If attention on this block, attach it to the end
       if self.arch['attention'][self.arch['resolution'][index]]:
         print('Adding attention layer in G at resolution %d' % self.arch['resolution'][index])
-        if smyrf:
+        if attn_approx == 'smyrf':
             print('Attention type: SMYRF')
             self.blocks[-1] += [layers.AttentionApproximation(self.arch['out_channels'][index],
                                                               n_hashes=n_hashes,
@@ -193,6 +198,18 @@ class Generator(nn.Module):
                                                               progress=progress,
                                                               max_iters=max_iters,
                                                               r=r)]
+
+        elif attn_approx == 'FT':
+            print('Attention type: Fast-Transformers')
+            self.blocks[-1] += [layers.AttentionApproximationFT(self.arch['out_channels'][index],
+                                                              attn_type=attn_type,
+                                                              clusters=q_cluster_size,
+                                                              topk=topk,
+                                                              feature_map=feature_map,
+                                                              n_dims=n_dims,
+                                                              which_conv=self.which_conv,
+                                                              progress=progress,
+                                                              )]
         else:
             self.blocks[-1] += [layers.Attention(self.arch['out_channels'][index], self.which_conv)]
 

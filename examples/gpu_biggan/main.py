@@ -26,7 +26,7 @@ parser.add_argument('--attn_approx',
 parser.add_argument('--attn_type',
     choices=['clustered', 'improved-clustered', 'linear', 'full'],
     default='improved-clustered', type=str)
-parser.add_argument('-topk', type=int, default=32)
+parser.add_argument('--topk', type=int, default=32)
 parser.add_argument("--feature_map", default='FAVOR', type=str)
 parser.add_argument('--n_dims', type=int, default=256)
 

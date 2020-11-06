@@ -11,6 +11,14 @@ from torch.nn import Parameter as P
 from smyrf.torch.attn import SmyrfAttention
 from sync_batchnorm import SynchronizedBatchNorm2d as SyncBN2d
 
+from fast_transformers.attention import AttentionLayer
+from fast_transformers.builders import AttentionBuilder
+from fast_transformers.masking import FullMask, LengthMask
+
+from functools import partial
+from fast_transformers.builders import TransformerEncoderBuilder
+from fast_transformers.feature_maps import Favor
+
 
 # Projection of x onto y
 def proj(x, y):
@@ -176,6 +184,7 @@ class Attention(nn.Module):
         return self.gamma * o + x, beta
 
 
+
 class AttentionApproximation(nn.Module):
   def __init__(self, ch, n_hashes, q_cluster_size, k_cluster_size,
                q_attn_size=None, k_attn_size=None, max_iters=10,
@@ -199,14 +208,17 @@ class AttentionApproximation(nn.Module):
      # Learnable gain parameter
      self.gamma = P(torch.tensor(0.), requires_grad=True)
 
-     self.smyrf = SmyrfAttention(n_hashes=n_hashes,
-                                 q_cluster_size=q_cluster_size,
-                                 k_cluster_size=k_cluster_size,
-                                 q_attn_size=q_attn_size,
-                                 k_attn_size=k_attn_size,
-                                 max_iters=max_iters,
-                                 clustering_algo=clustering_algo,
-                                 r=r)
+     builder = AttentionBuilder.from_kwargs(
+        attention_dropout=0.0,
+        clusters=q_cluster_size,
+        topk=32,
+        bits=63,
+        hash_bias=False,
+        query_dimensions=96,
+        #feature_map=partial(Favor, n_dims=256)
+        #feature_map=feature_map_func
+     )
+     self.inner_attention  = builder.get('improved-clustered')
      self.progress = progress
 
   def forward(self, x, y=None, return_attn_map=False):
@@ -216,22 +228,86 @@ class AttentionApproximation(nn.Module):
     values = F.max_pool2d(self.g(x), [2,2])
 
     # Perform reshapes
-    queries = queries.view(-1, self. ch // 8, x.shape[2] * x.shape[3]).transpose(-2, -1)
-    keys = keys.view(-1, self. ch // 8, x.shape[2] * x.shape[3] // 4).transpose(-2, -1)
-    values = values.view(-1, self. ch // 2, x.shape[2] * x.shape[3] // 4).transpose(-2, -1)
+    queries = queries.view(-1, self. ch // 8, x.shape[2] * x.shape[3]).transpose(-2, -1).unsqueeze(2)
+    keys = keys.view(-1, self. ch // 8, x.shape[2] * x.shape[3] // 4).transpose(-2, -1).unsqueeze(2)
+    values = values.view(-1, self. ch // 2, x.shape[2] * x.shape[3] // 4).transpose(-2, -1).unsqueeze(2)
+    N = queries.shape[0]
+    KL = keys.shape[1]
+    QL = queries.shape[1]
+    attn_mask = FullMask(KL, device=queries.device)
+    length_mask = LengthMask(queries.new_full((N,), KL, dtype=torch.int64))
 
-    if not return_attn_map:
-        out = self.smyrf(queries, keys, values, progress=self.progress).transpose(-2, -1)
-    else:
-        out, attn_map = self.smyrf(queries, keys, values, progress=self.progress, return_attn_map=True)
-        out = out.transpose(-2, -1)
+    query_length_mask = LengthMask(queries.new_full((N,), QL, dtype=torch.int64))
 
+    out = self.inner_attention(
+        queries,
+        keys,
+        values,
+        attn_mask=attn_mask,
+        query_lengths=query_length_mask,
+        key_lengths=length_mask
+    ).squeeze(2)
+    out = out.transpose(-2, -1)
     o = self.o(out.reshape(x.shape[0], -1, x.shape[2], x.shape[3]))
+    return self.gamma * o + x
 
-    if not return_attn_map:
-        return self.gamma * o + x
-    else:
-        return self.gamma * o + x, attn_map
+
+# class AttentionApproximation(nn.Module):
+#   def __init__(self, ch, n_hashes, q_cluster_size, k_cluster_size,
+#                q_attn_size=None, k_attn_size=None, max_iters=10,
+#                r=1, clustering_algo='lsh',
+#                progress=False, which_conv=SNConv2d, name='attention'):
+#      '''
+#         SmyrfAttention for BigGAN.
+#      '''
+#      super(AttentionApproximation, self).__init__()
+#      # Channel multiplier
+#      self.ch = ch
+#      self.which_conv = which_conv
+# 
+#      # queries
+#      self.theta = self.which_conv(self.ch, self.ch // 8, kernel_size=1, padding=0, bias=False)
+# 
+#      # keys
+#      self.phi = self.which_conv(self.ch, self.ch // 8, kernel_size=1, padding=0, bias=False)
+#      self.g = self.which_conv(self.ch, self.ch // 2, kernel_size=1, padding=0, bias=False)
+#      self.o = self.which_conv(self.ch // 2, self.ch, kernel_size=1, padding=0, bias=False)
+#      # Learnable gain parameter
+#      self.gamma = P(torch.tensor(0.), requires_grad=True)
+# 
+#      self.smyrf = SmyrfAttention(n_hashes=n_hashes,
+#                                  q_cluster_size=q_cluster_size,
+#                                  k_cluster_size=k_cluster_size,
+#                                  q_attn_size=q_attn_size,
+#                                  k_attn_size=k_attn_size,
+#                                  max_iters=max_iters,
+#                                  clustering_algo=clustering_algo,
+#                                  r=r)
+#      self.progress = progress
+# 
+#   def forward(self, x, y=None, return_attn_map=False):
+#     # Apply convs
+#     queries = self.theta(x)
+#     keys = F.max_pool2d(self.phi(x), [2,2])
+#     values = F.max_pool2d(self.g(x), [2,2])
+# 
+#     # Perform reshapes
+#     queries = queries.view(-1, self. ch // 8, x.shape[2] * x.shape[3]).transpose(-2, -1)
+#     keys = keys.view(-1, self. ch // 8, x.shape[2] * x.shape[3] // 4).transpose(-2, -1)
+#     values = values.view(-1, self. ch // 2, x.shape[2] * x.shape[3] // 4).transpose(-2, -1)
+# 
+#     if not return_attn_map:
+#         out = self.smyrf(queries, keys, values, progress=self.progress).transpose(-2, -1)
+#     else:
+#         out, attn_map = self.smyrf(queries, keys, values, progress=self.progress, return_attn_map=True)
+#         out = out.transpose(-2, -1)
+# 
+#     o = self.o(out.reshape(x.shape[0], -1, x.shape[2], x.shape[3]))
+# 
+#     if not return_attn_map:
+#         return self.gamma * o + x
+#     else:
+#         return self.gamma * o + x, attn_map
 
 
 # Fused batchnorm op

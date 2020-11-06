@@ -185,15 +185,14 @@ class Attention(nn.Module):
 
 
 
-class AttentionApproximation(nn.Module):
-  def __init__(self, ch, n_hashes, q_cluster_size, k_cluster_size,
-               q_attn_size=None, k_attn_size=None, max_iters=10,
-               r=1, clustering_algo='lsh',
+class AttentionApproximationFT(nn.Module):
+  def __init__(self, ch, attn_type, clusters, topk=32, feature_map='FAVOR',
+               n_dims=256,
                progress=False, which_conv=SNConv2d, name='attention'):
      '''
-        SmyrfAttention for BigGAN.
+        Fast Transformers Attention for BigGAN.
      '''
-     super(AttentionApproximation, self).__init__()
+     super(AttentionApproximationFT, self).__init__()
      # Channel multiplier
      self.ch = ch
      self.which_conv = which_conv
@@ -207,18 +206,21 @@ class AttentionApproximation(nn.Module):
      self.o = self.which_conv(self.ch // 2, self.ch, kernel_size=1, padding=0, bias=False)
      # Learnable gain parameter
      self.gamma = P(torch.tensor(0.), requires_grad=True)
+     if feature_map == 'FAVOR':
+         feature_map_func = partial(Favor, n_dims=n_dims)
+     else:
+         feature_map_func = None
 
      builder = AttentionBuilder.from_kwargs(
-        attention_dropout=0.0,
-        clusters=q_cluster_size,
-        topk=32,
-        bits=63,
-        hash_bias=False,
-        query_dimensions=96,
-        #feature_map=partial(Favor, n_dims=256)
-        #feature_map=feature_map_func
+         attention_dropout=0.0,
+         clusters=clusters,
+         topk=topk,
+         bits=63,
+         hash_bias=True,
+         query_dimensions=self.ch // 8,
+         feature_map=feature_map_func
      )
-     self.inner_attention  = builder.get('improved-clustered')
+     self.inner_attention  = builder.get(attn_type)
      self.progress = progress
 
   def forward(self, x, y=None, return_attn_map=False):
@@ -252,62 +254,62 @@ class AttentionApproximation(nn.Module):
     return self.gamma * o + x
 
 
-# class AttentionApproximation(nn.Module):
-#   def __init__(self, ch, n_hashes, q_cluster_size, k_cluster_size,
-#                q_attn_size=None, k_attn_size=None, max_iters=10,
-#                r=1, clustering_algo='lsh',
-#                progress=False, which_conv=SNConv2d, name='attention'):
-#      '''
-#         SmyrfAttention for BigGAN.
-#      '''
-#      super(AttentionApproximation, self).__init__()
-#      # Channel multiplier
-#      self.ch = ch
-#      self.which_conv = which_conv
-# 
-#      # queries
-#      self.theta = self.which_conv(self.ch, self.ch // 8, kernel_size=1, padding=0, bias=False)
-# 
-#      # keys
-#      self.phi = self.which_conv(self.ch, self.ch // 8, kernel_size=1, padding=0, bias=False)
-#      self.g = self.which_conv(self.ch, self.ch // 2, kernel_size=1, padding=0, bias=False)
-#      self.o = self.which_conv(self.ch // 2, self.ch, kernel_size=1, padding=0, bias=False)
-#      # Learnable gain parameter
-#      self.gamma = P(torch.tensor(0.), requires_grad=True)
-# 
-#      self.smyrf = SmyrfAttention(n_hashes=n_hashes,
-#                                  q_cluster_size=q_cluster_size,
-#                                  k_cluster_size=k_cluster_size,
-#                                  q_attn_size=q_attn_size,
-#                                  k_attn_size=k_attn_size,
-#                                  max_iters=max_iters,
-#                                  clustering_algo=clustering_algo,
-#                                  r=r)
-#      self.progress = progress
-# 
-#   def forward(self, x, y=None, return_attn_map=False):
-#     # Apply convs
-#     queries = self.theta(x)
-#     keys = F.max_pool2d(self.phi(x), [2,2])
-#     values = F.max_pool2d(self.g(x), [2,2])
-# 
-#     # Perform reshapes
-#     queries = queries.view(-1, self. ch // 8, x.shape[2] * x.shape[3]).transpose(-2, -1)
-#     keys = keys.view(-1, self. ch // 8, x.shape[2] * x.shape[3] // 4).transpose(-2, -1)
-#     values = values.view(-1, self. ch // 2, x.shape[2] * x.shape[3] // 4).transpose(-2, -1)
-# 
-#     if not return_attn_map:
-#         out = self.smyrf(queries, keys, values, progress=self.progress).transpose(-2, -1)
-#     else:
-#         out, attn_map = self.smyrf(queries, keys, values, progress=self.progress, return_attn_map=True)
-#         out = out.transpose(-2, -1)
-# 
-#     o = self.o(out.reshape(x.shape[0], -1, x.shape[2], x.shape[3]))
-# 
-#     if not return_attn_map:
-#         return self.gamma * o + x
-#     else:
-#         return self.gamma * o + x, attn_map
+class AttentionApproximation(nn.Module):
+  def __init__(self, ch, n_hashes, q_cluster_size, k_cluster_size,
+               q_attn_size=None, k_attn_size=None, max_iters=10,
+               r=1, clustering_algo='lsh',
+               progress=False, which_conv=SNConv2d, name='attention'):
+     '''
+        SmyrfAttention for BigGAN.
+     '''
+     super(AttentionApproximation, self).__init__()
+     # Channel multiplier
+     self.ch = ch
+     self.which_conv = which_conv
+
+     # queries
+     self.theta = self.which_conv(self.ch, self.ch // 8, kernel_size=1, padding=0, bias=False)
+
+     # keys
+     self.phi = self.which_conv(self.ch, self.ch // 8, kernel_size=1, padding=0, bias=False)
+     self.g = self.which_conv(self.ch, self.ch // 2, kernel_size=1, padding=0, bias=False)
+     self.o = self.which_conv(self.ch // 2, self.ch, kernel_size=1, padding=0, bias=False)
+     # Learnable gain parameter
+     self.gamma = P(torch.tensor(0.), requires_grad=True)
+
+     self.smyrf = SmyrfAttention(n_hashes=n_hashes,
+                                 q_cluster_size=q_cluster_size,
+                                 k_cluster_size=k_cluster_size,
+                                 q_attn_size=q_attn_size,
+                                 k_attn_size=k_attn_size,
+                                 max_iters=max_iters,
+                                 clustering_algo=clustering_algo,
+                                 r=r)
+     self.progress = progress
+
+  def forward(self, x, y=None, return_attn_map=False):
+    # Apply convs
+    queries = self.theta(x)
+    keys = F.max_pool2d(self.phi(x), [2,2])
+    values = F.max_pool2d(self.g(x), [2,2])
+
+    # Perform reshapes
+    queries = queries.view(-1, self. ch // 8, x.shape[2] * x.shape[3]).transpose(-2, -1)
+    keys = keys.view(-1, self. ch // 8, x.shape[2] * x.shape[3] // 4).transpose(-2, -1)
+    values = values.view(-1, self. ch // 2, x.shape[2] * x.shape[3] // 4).transpose(-2, -1)
+
+    if not return_attn_map:
+        out = self.smyrf(queries, keys, values, progress=self.progress).transpose(-2, -1)
+    else:
+        out, attn_map = self.smyrf(queries, keys, values, progress=self.progress, return_attn_map=True)
+        out = out.transpose(-2, -1)
+
+    o = self.o(out.reshape(x.shape[0], -1, x.shape[2], x.shape[3]))
+
+    if not return_attn_map:
+        return self.gamma * o + x
+    else:
+        return self.gamma * o + x, attn_map
 
 
 # Fused batchnorm op

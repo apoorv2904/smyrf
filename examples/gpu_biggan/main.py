@@ -18,6 +18,18 @@ parser.add_argument('--ema', default=False, action="store_true")
 parser.add_argument('--bs', default=1, type=int)
 parser.add_argument('--device', default='cuda')
 parser.add_argument('--seed', type=int)
+# Attention approximation mechanism
+parser.add_argument('--attn_approx',
+    choices=['smyrf', 'FT', 'default'], default='FT', type=str)
+
+# Fast-Transformers arguments
+parser.add_argument('--attn_type',
+    choices=['clustered', 'improved-clustered', 'linear', 'full'],
+    default='improved-clustered', type=str)
+parser.add_argument('-topk', type=int, default=32)
+parser.add_argument("--feature_map", default='FAVOR', type=str)
+parser.add_argument('--n_dims', type=int, default=256)
+
 # Clustering configuration
 parser.add_argument('--n_hashes', type=int, default=4)
 parser.add_argument('--q_cluster_size', type=int, default=32)
@@ -31,6 +43,7 @@ parser.add_argument('--sample_iters', default=1, type=int)
 parser.add_argument('--do_metrics', default=False, action='store_true')
 parser.add_argument('--disable_smyrf', action='store_true', default=False)
 parser.add_argument('--do_npz', default=False, action='store_true')
+parser.add_argument('--out_file', default="samples", type=str)
 
 # metrics configuration
 parser.add_argument('--dataset', default='I128_hdf5',
@@ -129,6 +142,13 @@ if __name__ == '__main__':
     config['dataset'] = args.dataset
     config['num_inception_images'] = args.num_inception_images
 
+    # Fast Transformer config
+    config['attn_approx'] = args.attn_approx
+    config['attn_type'] = args.attn_type
+    config['topk'] = args.topk
+    config['feature_map'] = args.feature_map
+    config['n_dims'] = args.n_dims
+
     biggan = Biggan(config)
     biggan.load_pretrained()
 
@@ -144,7 +164,7 @@ if __name__ == '__main__':
             generator_inputs = biggan.get_random_inputs(bs=args.bs,
                                                         target=category,
                                                         seed=args.seed)
-            out, _ = biggan.sample(generator_inputs, out_path='./samples.png')
+            out, _ = biggan.sample(generator_inputs, out_path='./{}.png'.format(args.out_file))
             del generator_inputs, out, _
 
     if args.do_metrics:

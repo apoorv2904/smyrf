@@ -7,6 +7,7 @@ feature_map='FAVOR'
 n_dims=256
 affix='default'
 q_cluster_size=256
+topk=32
 n_hashes=2
 batch_size=49
 seed=42
@@ -27,5 +28,6 @@ python main.py --seed=$seed \
   --ema --n_hashes=$n_hashes --imagenet_category="$imagenet_category" \
   --attn_approx $attn_approx \
   --attn_type $attn_type \
+  --topk $topk \
   --feature_map $feature_map --n_dims $n_dims \
   --out_file "$out"

@@ -216,6 +216,7 @@ class AttentionApproximationFT(nn.Module):
          clusters=clusters,
          topk=topk,
          bits=63,
+         softmax_temp=1.,
          hash_bias=True,
          query_dimensions=self.ch // 8,
          feature_map=feature_map_func

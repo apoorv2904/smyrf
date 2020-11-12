@@ -171,8 +171,6 @@ def main(argv):
         topk=args.topk,
         iterations=args.lloyd_iterations,
         clusters=args.clusters,
-        q_clusters=args.clusters,
-        k_clusters=args.clusters,
         rounds=args.rounds
     )
 
